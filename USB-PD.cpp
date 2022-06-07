@@ -81,6 +81,21 @@ PD_Engine::Error PD_Engine::requestIdentity(PD::Destination dest, void (*cb)(PD:
 PD_Engine::Error PD_Engine::requestSourceCap(void (*cb)(PD::Capabilities))
 {
     this->capabilitiesCB = cb;
+
+    uint16_t header = 0;
+
+    //Message type: Get_Source_Cap
+    header |= 0x7;
+    //Revision
+    header |= 1 << 6;
+    //Cable plug role
+    header |= 0 << 8;
+    //Message id
+    header |= (this->tcpm->getMessageID() & 0x07) << 9;
+    //Number of data objects
+    header |= 0 << 12;
+
+    this->tcpm->sendMessage(header, 0, PD::Destination::SOP);
 }
 
 PD_Engine::Error PD_Engine::requestSinkCap(void (*cb)(PD::Capabilities))

@@ -941,6 +941,7 @@ void FUSB302::requestPower(uint32_t pdo, int position)
     Serial.println("Requested voltage");
 }
 
+// Deprecated
 void FUSB302::requestSourceCap()
 {
     uint16_t header = 0;
