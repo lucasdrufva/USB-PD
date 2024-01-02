@@ -15,11 +15,18 @@ void FUSB302::begin()
     this->interrupt_init();
 
     //Enable sop' packets
-    this->i2c_set_bits(FUSB_CONTROL1, FUSB_CONTROL1_ENSOP1);
+    //this->i2c_set_bits(FUSB_CONTROL1, FUSB_CONTROL1_ENSOP1);
+
+    this->i2c_write(FUSB_CONTROL1, FUSB_CONTROL1_RX_FLUSH | FUSB_CONTROL1_ENSOP1);
+
+    // Disables source polling
+    //this->i2c_write(FUSB_CONTROL2, 0x00);
 
     //Turn on power for all internals
     //TODO: save power and start in lower power mode
     this->i2c_write(FUSB_POWER, FUSB_POWER_ALL);
+
+    this->i2c_write(FUSB_CONTROL0, 0x44);
 
     // //Reset pd
     this->i2c_write(0x0C, 1 << 1);
@@ -40,11 +47,15 @@ void FUSB302::begin()
 void FUSB302::interrupt_init()
 {
     //Enable interupts
-    this->i2c_clear_bits(FUSB_CONTROL0, FUSB_CONTROL0_INT_MASK);
+    //this->i2c_clear_bits(FUSB_CONTROL0, FUSB_CONTROL0_INT_MASK);
 
-    this->i2c_write(FUSB_MASKA, 0xFF & ~FUSB_MASKA_TXSENT);
-    this->i2c_write(FUSB_MASKB, 0xFF & ~FUSB_MASKB_GCRCSENT);
-    this->i2c_write(FUSB_MASK, 0xFF);
+    // this->i2c_write(FUSB_MASKA, 0xFF & ~FUSB_MASKA_TXSENT);
+    // this->i2c_write(FUSB_MASKB, 0xFF & ~FUSB_MASKB_GCRCSENT);
+    // this->i2c_write(FUSB_MASK, 0xFF);
+    this->i2c_write(FUSB_MASKA, 0x00);
+    this->i2c_write(FUSB_MASKB, 0x00);
+    this->i2c_write(FUSB_MASK, 0x00);
+    this->i2c_write(FUSB_CONTROL0, 0b11 << 2);
 }
 
 //0 = down, 1 = up
@@ -116,10 +127,10 @@ int FUSB302::measure_cc_pin_source(int pin)
     /* Restore SWITCHES0 register to its value prior */
     this->i2c_write(0x02, oldSwitchesState);
 
-    Serial.print("Measured this on");
-    Serial.print(pin);
-    Serial.print(" : ");
-    Serial.println(cc_lvl);
+    // Serial.print("Measured this on");
+    // Serial.print(pin);
+    // Serial.print(" : ");
+    // Serial.println(cc_lvl);
 
     return cc_lvl;
 }
@@ -149,10 +160,10 @@ int FUSB302::measure_cc_pin_sink(int pin)
     /* Restore SWITCHES0 register to its value prior */
     this->i2c_write(0x02, oldSwitchesState);
 
-    Serial.print("Measured this on");
-    Serial.print(pin);
-    Serial.print(" : ");
-    Serial.println(cc_lvl);
+    // Serial.print("Measured this on");
+    // Serial.print(pin);
+    // Serial.print(" : ");
+    // Serial.println(cc_lvl);
 
     return cc_lvl;
 }
@@ -355,6 +366,8 @@ void FUSB302::sendPing(int destination)
     this->send_message(header, 0, destination);
 }
 
+// TODO why is the both a send_message and an sendMessage function that are identical?
+// Different parameters?
 void FUSB302::send_message(uint16_t header, const uint32_t *data, int destination)
 {
     this->flush_tx();
@@ -428,7 +441,7 @@ void FUSB302::send_message(uint16_t header, const uint32_t *data, int destinatio
     /* burst write for speed! */
     this->i2c_transfer(buf, buf_pos, 0, 0, true);
 
-    Serial.println("Message sent...");
+    Serial.println("Message sent...a");
 }
 
 void FUSB302::sendMessage(uint16_t header, const uint32_t *data, PD::Destination destination)
@@ -504,7 +517,14 @@ void FUSB302::sendMessage(uint16_t header, const uint32_t *data, PD::Destination
     /* burst write for speed! */
     this->i2c_transfer(buf, buf_pos, 0, 0, true);
 
-    Serial.println("Message sent...");
+    Serial.println("Message sent...b");
+
+    for(int i = 0; i < buf_pos; i++){
+        Serial.println(buf[i],HEX);
+    }
+
+    flush_tx();
+
 }
 
 void FUSB302::flush_tx()
@@ -558,6 +578,8 @@ void FUSB302::handleInterrupt()
     int rv = 0;
 
     this->i2c_read(FUSB_INTERRUPT_A, &data);
+    Serial.print("IntA data: 0x");
+    Serial.print(data, HEX);
     if (data & FUSB_INTERRUPT_A_TOGDONE)
     {
         //Signal toggle done?
@@ -569,6 +591,8 @@ void FUSB302::handleInterrupt()
     }
 
     this->i2c_read(FUSB_INTERRUPT_B, &data);
+    Serial.print(" IntB data: 0x");
+    Serial.print(data, HEX);
     if (data & FUSB_INTERRUPT_B_GCRCSENT)
     {
         Serial.println("Responded good crc");
@@ -576,6 +600,9 @@ void FUSB302::handleInterrupt()
     }
 
     this->i2c_read(FUSB_INTERRUPT, &data);
+
+    Serial.print(" Int data: 0x");
+    Serial.println(data, HEX);
 
     this->interrupt_clear();
 }
@@ -619,9 +646,26 @@ void FUSB302::read_message()
 
     uint8_t reg[] = {FUSB_FIFOS};
 
+    //len +2 because get_num_bytes already gives +2 and we want +4 to get rid of crc
     this->i2c_transfer(reg, 1, buffer, len + 2, true);
 
     memcpy(data, buffer, len);
+
+    if((token & 0xE0) == 0xE0){
+        Serial.println("From SOP");
+    }
+    else if((token & 0xE0) == 0xC0){
+        Serial.println("From SOP PRIME");
+        //return;
+    }
+    else if((token & 0xE0) == 0xA0){
+        Serial.println("From SOP DOUBLE PRIME");
+        //return;
+    }
+
+
+    Serial.print("TOKEN: ");
+    Serial.println(token, HEX);
 
     Serial.print("header recieved: 0x");
     Serial.println(header, HEX);
@@ -638,6 +682,8 @@ void FUSB302::read_message()
     //Control message
     if (dataObjects == 0)
     {
+        Serial.print("Controll message of type: ");
+        Serial.println(messageType);
         message.type = PD::MessageType::CONTROL;
         if (messageType == PD::ControlMessageType::GOODCRC)
         {
@@ -667,10 +713,13 @@ void FUSB302::read_message()
     //Data message
     else
     {
+        Serial.print("Data message of type: ");
+        Serial.println(messageType);
         message.type = PD::MessageType::DATA;
         //Source capabilities
         if (messageType == PD::DataMessageType::SOURCE_CAP)
         {
+            
             message.dataMessage.type = PD::DataMessageType::SOURCE_CAP;
             for (int i = 0; i < dataObjects; i++)
             {
@@ -741,7 +790,7 @@ void FUSB302::read_message()
                     //Request
                     //TODO: use destination request recieved from
                     Serial.println("Respond identity");
-                    this->respond_identity_req_message(PD::Destination::SOP);
+                    //this->respond_identity_req_message(PD::Destination::SOP_PRIME);
                 }
                 else
                 {
@@ -807,26 +856,49 @@ void FUSB302::set_polarity(int polarity)
 
 void FUSB302::enable_tx()
 {
-    this->i2c_set_bits(FUSB_SWITCHES1, FUSB_SWITCHES1_AUTOCRC);
+    Serial.println("Enabling tx");
+    // this->i2c_set_bits(FUSB_SWITCHES1, FUSB_SWITCHES1_AUTOCRC);
 
-    this->i2c_clear_bits(FUSB_SWITCHES1, FUSB_SWITCHES1_TXCC1 | FUSB_SWITCHES1_TXCC2);
-    if (this->polarity == 0)
+    // this->i2c_clear_bits(FUSB_SWITCHES1, FUSB_SWITCHES1_TXCC1 | FUSB_SWITCHES1_TXCC2);
+    // if (this->polarity == 0)
+    // {
+    //     this->i2c_set_bits(FUSB_SWITCHES1, FUSB_SWITCHES1_TXCC1);
+    // }
+    // else
+    // {
+    //     this->i2c_set_bits(FUSB_SWITCHES1, FUSB_SWITCHES1_TXCC2);
+    // }
+
+    // if (this->isSource)
+    // {
+    //     this->i2c_set_bits(FUSB_SWITCHES1, FUSB_SWITCHES1_DATAROLE | FUSB_SWITCHES1_POWERROLE);
+    // }
+    // else
+    // {
+    //     this->i2c_clear_bits(FUSB_SWITCHES1, FUSB_SWITCHES1_DATAROLE | FUSB_SWITCHES1_POWERROLE);
+    // }
+
+    this->i2c_write(FUSB_SWITCHES0, 0x07);
+    delay(10);
+    uint8_t cc1;
+    this->i2c_read(FUSB_STATUS0, &cc1);
+    cc1 = cc1 & 0x3;
+
+    this->i2c_write(FUSB_SWITCHES0, 0x0B);
+    delay(10);
+    uint8_t cc2;
+    this->i2c_read(FUSB_STATUS0, &cc2);
+    cc2 = cc2 & 0x3;
+
+    if(cc1 > cc2)
     {
-        this->i2c_set_bits(FUSB_SWITCHES1, FUSB_SWITCHES1_TXCC1);
-    }
-    else
-    {
-        this->i2c_set_bits(FUSB_SWITCHES1, FUSB_SWITCHES1_TXCC2);
+        this->i2c_write(FUSB_SWITCHES1, 0x25);
+        this->i2c_write(FUSB_SWITCHES0, 0x07);
+    }else {
+        this->i2c_write(FUSB_SWITCHES1, 0x26);
+        this->i2c_write(FUSB_SWITCHES0, 0x0B);
     }
 
-    if (this->isSource)
-    {
-        this->i2c_set_bits(FUSB_SWITCHES1, FUSB_SWITCHES1_DATAROLE | FUSB_SWITCHES1_POWERROLE);
-    }
-    else
-    {
-        this->i2c_clear_bits(FUSB_SWITCHES1, FUSB_SWITCHES1_DATAROLE | FUSB_SWITCHES1_POWERROLE);
-    }
 
     this->flush_tx();
     this->flush_rx();
@@ -872,6 +944,9 @@ void FUSB302::respond_identity_req_message(int destination)
     MESSAGE_HEADER |= (this->messageID & 0x07) << 9;
     //Number of data objects
     MESSAGE_HEADER |= 0x4 << 12;
+
+    Serial.print("Respond iden req id:");
+    Serial.println(this->messageID);
 
     uint32_t VDM_HEADER;
     VDM_HEADER |= PD_DISCOVER_IDENTITY;

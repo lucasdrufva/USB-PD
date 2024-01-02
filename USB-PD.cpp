@@ -1,5 +1,7 @@
 #include "USB-PD.h"
 
+#include <Arduino.h>
+
 PD_Engine pd;
 
 void handleMessageCB(PD::Message msg)
@@ -95,6 +97,8 @@ PD_Engine::Error PD_Engine::requestSourceCap(void (*cb)(PD::Capabilities))
     //Number of data objects
     header |= 0 << 12;
 
+
+
     this->tcpm->sendMessage(header, 0, PD::Destination::SOP);
 }
 
@@ -177,14 +181,33 @@ void PD_Engine::requestPower(int object_position)
     //Number of data objects: 1
     header |= 1 << 12;
 
+    Serial.print("Req power with mID: ");
+    Serial.print(this->tcpm->getMessageID());
+    Serial.print(" object: ");
+    Serial.print(object_position+1);
+    Serial.print(" oC: ");
+    Serial.print(this->last_cap_recieved.dataObjects[object_position].sourceFixed.current / 10);
+    Serial.print(" mC: ");
+    Serial.println(this->last_cap_recieved.dataObjects[object_position].sourceFixed.current / 10);
+
+
+
     uint32_t body;
 
-    body |= object_position+1 << 28;
+    body |= (object_position+1) << 28;
+
+    // No usb suspend
+    body |= 1 << 25;
 
     // Operating current in 10mA units
-    body |= (this->last_cap_recieved.dataObjects[object_position].sourceFixed.current / 10) << 10;
+    body |= ((this->last_cap_recieved.dataObjects[object_position].sourceFixed.current / 10)) << 10;
     // Maximum Operating Current 10mA units, see 6.4.2
-    body |= (this->last_cap_recieved.dataObjects[object_position].sourceFixed.current / 10) << 0;
+    body |= ((this->last_cap_recieved.dataObjects[object_position].sourceFixed.current / 10)) << 0;
+
+    // body |= 5 << 10;
+    // body |= 10 << 0;
+
+
 
     this->tcpm->sendMessage(header, &body, PD::Destination::SOP);
 }
